@@ -28,7 +28,6 @@ import {
 // ── Config ──────────────────────────────────────────────────────────────────
 
 type Config = {
-  geminiModel: string;
   evms: Array<{
     marketAddress: string;
     chainSelectorName: string;
@@ -45,6 +44,23 @@ const MARKET_ABI = parseAbi([
 
 const SETTLEMENT_REQUESTED_SIG = "SettlementRequested(uint256)";
 
+// ── Resolution Source Routing ────────────────────────────────────────────────
+
+const POLYMARKET_SOURCES = [
+  "polymarket_volume",
+  "polymarket_traders",
+  "polymarket_kalshi_data",
+  "polymarket_markets",
+  "all",
+];
+const KALSHI_SOURCES = [
+  "kalshi_markets",
+  "kalshi_volume",
+  "polymarket_kalshi_data",
+  "kalshi_traders",
+  "all",
+];
+
 // ── Settlement Logic (runs on each DON node) ────────────────────────────────
 
 const buildSettlementRequest =
@@ -53,97 +69,181 @@ const buildSettlementRequest =
     options: readonly string[],
     resolutionSource: string,
     apiKey: string,
+    needsPolymarketData: boolean,
+    needsKalshiData: boolean,
+    isAiSearchOnly: boolean,
   ) =>
-  (sendRequester: HTTPSendRequester, config: Config): number => {
-    // 1. Fetch Polymarket data
-    let polymarketData = "[]";
-    try {
-      const polyResp = sendRequester
-        .sendRequest({
-          url: "https://gamma-api.polymarket.com/markets?limit=10&active=true",
-          method: "GET" as const,
-          cacheSettings: { store: true, maxAge: "60s" },
-        })
-        .result();
-      if (ok(polyResp)) {
-        polymarketData = new TextDecoder().decode(polyResp.body);
+  (sendRequester: HTTPSendRequester, _config: Config): number => {
+    let polyEventsData = "No Polymarket data fetched for this market type.";
+    let polyMarketsData = "";
+    let kalshiMarketsData = "No Kalshi data fetched for this market type.";
+    let kalshiTradesData = "";
+
+    if (needsPolymarketData) {
+      // Fetch Polymarket events (top 20 by volume)
+      try {
+        const resp = sendRequester
+          .sendRequest({
+            url: "https://gamma-api.polymarket.com/events?active=true&closed=false&limit=20&order=volume&ascending=false",
+            method: "GET" as const,
+            cacheSettings: { store: true, maxAge: "60s" },
+          })
+          .result();
+        if (ok(resp)) {
+          polyEventsData = new TextDecoder().decode(resp.body);
+        }
+      } catch {
+        polyEventsData = "Polymarket events API unavailable";
       }
-    } catch {
-      // Polymarket unavailable — continue with empty data
+
+      // Fetch Polymarket markets (top 30 by volume)
+      try {
+        const resp = sendRequester
+          .sendRequest({
+            url: "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=30&order=volumeNum&ascending=false",
+            method: "GET" as const,
+            cacheSettings: { store: true, maxAge: "60s" },
+          })
+          .result();
+        if (ok(resp)) {
+          polyMarketsData = new TextDecoder().decode(resp.body);
+        }
+      } catch {
+        polyMarketsData = "Polymarket markets API unavailable";
+      }
     }
 
-    // 2. Fetch Kalshi data
-    let kalshiData = "[]";
-    try {
-      const kalshiResp = sendRequester
-        .sendRequest({
-          url: "https://api.elections.kalshi.com/trade-api/v2/markets?limit=10&status=open",
-          method: "GET" as const,
-          cacheSettings: { store: true, maxAge: "60s" },
-        })
-        .result();
-      if (ok(kalshiResp)) {
-        kalshiData = new TextDecoder().decode(kalshiResp.body);
+    if (needsKalshiData) {
+      // Fetch Kalshi markets (top 50 open)
+      try {
+        const resp = sendRequester
+          .sendRequest({
+            url: "https://api.elections.kalshi.com/trade-api/v2/markets?status=open&limit=50",
+            method: "GET" as const,
+            cacheSettings: { store: true, maxAge: "60s" },
+          })
+          .result();
+        if (ok(resp)) {
+          kalshiMarketsData = new TextDecoder().decode(resp.body);
+        }
+      } catch {
+        kalshiMarketsData = "Kalshi markets API unavailable";
       }
-    } catch {
-      // Kalshi unavailable — continue with empty data
+
+      // Fetch Kalshi recent trades
+      try {
+        const resp = sendRequester
+          .sendRequest({
+            url: "https://api.elections.kalshi.com/trade-api/v2/trades?limit=30",
+            method: "GET" as const,
+            cacheSettings: { store: true, maxAge: "60s" },
+          })
+          .result();
+        if (ok(resp)) {
+          kalshiTradesData = new TextDecoder().decode(resp.body);
+        }
+      } catch {
+        kalshiTradesData = "Kalshi trades API unavailable";
+      }
     }
 
-    // 3. Build prompt and call Gemini AI
-    const optionsList = options.map((o, i) => `  ${i}: ${o}`).join("\n");
+    // Build prompt based on resolution type
+    const optionsList = options.map((o, i) => `${i} = ${o}`).join(", ");
+    let aiPrompt: string;
+    let messages: Array<{ role: string; content: string }>;
 
-    const prompt = `You are a prediction market settlement oracle. Determine the outcome of this market based on available data.
+    if (isAiSearchOnly) {
+      aiPrompt = `You are a prediction market settlement oracle. You must determine the outcome for the following market by searching the web for the latest news and announcements.
 
 Market Question: ${question}
-Resolution Source: ${resolutionSource}
+Market Options: ${optionsList}
 
-Options:
+IMPORTANT: This question is about the prediction market industry (tokens, airdrops, launches, partnerships, etc.). Search the web for:
+- Official announcements from the platforms mentioned
+- Recent news articles about the topic
+- Twitter/X posts from official accounts
+- Blog posts or press releases
+
+Based on your web search findings, determine the most likely outcome.
+Respond with ONLY a JSON object: {"outcome": <0-based index>, "confidence": <0-100>, "reasoning": "<brief>"}
 ${optionsList}
 
-Polymarket data (active markets):
-${polymarketData.slice(0, 4000)}
+If there is no clear evidence yet (e.g., no announcement has been made), choose the option that represents "No" or the status quo.`;
 
-Kalshi data (active markets):
-${kalshiData.slice(0, 4000)}
+      messages = [
+        {
+          role: "system",
+          content:
+            "You are a prediction market settlement oracle. Search the web thoroughly before answering. Use the most recent and reliable sources available.",
+        },
+        { role: "user", content: aiPrompt },
+      ];
+    } else {
+      aiPrompt = `You are a prediction market settlement oracle. Determine the outcome for the following market.
 
-Based on the data and your knowledge, determine which outcome is correct.
+Market Question: ${question}
+Market Options: ${optionsList}
+Resolution Source: ${resolutionSource}
+
+=== POLYMARKET DATA (Top Events by Volume) ===
+${polyEventsData.slice(0, 3000)}
+
+=== POLYMARKET DATA (Top Markets by Volume) ===
+${polyMarketsData.slice(0, 3000)}
+
+=== KALSHI DATA (Open Markets) ===
+${kalshiMarketsData.slice(0, 3000)}
+
+=== KALSHI DATA (Recent Trades) ===
+${kalshiTradesData.slice(0, 3000)}
+
+Based on ALL the data above, determine the outcome.
 Respond with ONLY a JSON object: {"outcome": <0-based index>, "confidence": <0-100>, "reasoning": "<brief>"}
-For binary markets: 0 = first option (No), 1 = second option (Yes).`;
+${optionsList}`;
 
-    const geminiBody = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0, topK: 1, maxOutputTokens: 256 },
-      tools: [{ googleSearch: {} }],
+      messages = [{ role: "user", content: aiPrompt }];
+    }
+
+    // Call OpenRouter AI
+    const requestBody = JSON.stringify({
+      model: "google/gemini-2.0-flash-001",
+      messages,
+      temperature: 0,
+      max_tokens: 256,
     });
 
     const body = Buffer.from(
-      new TextEncoder().encode(geminiBody),
+      new TextEncoder().encode(requestBody),
     ).toString("base64");
 
-    const geminiResp = sendRequester
+    const aiResp = sendRequester
       .sendRequest({
-        url: `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent`,
+        url: "https://openrouter.ai/api/v1/chat/completions",
         method: "POST" as const,
         body,
         headers: {
           "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
+          Authorization: "Bearer " + apiKey,
         },
         cacheSettings: { store: true, maxAge: "60s" },
       })
       .result();
 
-    if (!ok(geminiResp)) {
-      throw new Error(`Gemini API error: ${geminiResp.statusCode}`);
+    const respBody = new TextDecoder().decode(aiResp.body);
+
+    if (!ok(aiResp)) {
+      throw new Error(
+        `OpenRouter API error: ${aiResp.statusCode} - ${respBody}`,
+      );
     }
 
-    const responseJson = JSON.parse(new TextDecoder().decode(geminiResp.body));
-    const text = responseJson?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error("Malformed Gemini response");
+    const responseJson = JSON.parse(respBody);
+    const text = responseJson?.choices?.[0]?.message?.content;
+    if (!text) throw new Error("Malformed OpenRouter response");
 
-    // 4. Parse outcome
+    // Parse outcome
     const match = text.match(/\{[\s\S]*?"outcome"[\s\S]*?\}/);
-    if (!match) throw new Error(`Cannot parse Gemini response: ${text}`);
+    if (!match) throw new Error(`Cannot parse AI response: ${text}`);
 
     const parsed = JSON.parse(match[0]) as { outcome: number };
     if (parsed.outcome < 0 || parsed.outcome >= options.length) {
@@ -223,8 +323,17 @@ const onSettlementRequested = (
 
   runtime.log(`Market: "${question}" | Options: [${options.join(", ")}]`);
 
-  // 5. Fetch prediction market data + call Gemini AI for settlement
-  const apiKey = runtime.getSecret({ id: "GEMINI_API_KEY" }).result();
+  // 5. Route based on resolution source
+  const needsPolymarketData = POLYMARKET_SOURCES.includes(resolutionSource);
+  const needsKalshiData = KALSHI_SOURCES.includes(resolutionSource);
+  const isAiSearchOnly = resolutionSource === "ai_search";
+
+  runtime.log(
+    `Resolution source: ${resolutionSource} | Route: ${isAiSearchOnly ? "AI_SEARCH" : `API_DATA (poly=${needsPolymarketData}, kalshi=${needsKalshiData})`}`,
+  );
+
+  // 6. Fetch data + call AI for settlement
+  const apiKey = runtime.getSecret({ id: "OPENROUTER_API_KEY" }).result();
   const httpClient = new HTTPClient();
 
   const outcome = httpClient
@@ -235,6 +344,9 @@ const onSettlementRequested = (
         options,
         resolutionSource,
         apiKey.value,
+        needsPolymarketData,
+        needsKalshiData,
+        isAiSearchOnly,
       ),
       consensusIdenticalAggregation<number>(),
     )(runtime.config)
@@ -242,13 +354,13 @@ const onSettlementRequested = (
 
   runtime.log(`Settlement outcome: ${outcome} (${options[outcome]})`);
 
-  // 6. Encode report: (marketId, outcome)
+  // 7. Encode report: (marketId, outcome)
   const reportData = encodeAbiParameters(
     parseAbiParameters("uint256, uint8"),
     [marketId, outcome],
   );
 
-  // 7. Generate DON-signed report
+  // 8. Generate DON-signed report
   const report = runtime
     .report({
       encodedPayload: hexToBase64(reportData),
@@ -258,7 +370,7 @@ const onSettlementRequested = (
     })
     .result();
 
-  // 8. Write report to MetaPredictionMarket contract
+  // 9. Write report to MetaPredictionMarket contract
   const writeResult = evmClient
     .writeReport(runtime, {
       receiver: evmConfig.marketAddress,
