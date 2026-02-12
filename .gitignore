@@ -2,4 +2,7 @@ node_modules/
 .env
 *.wasm
 tmp.js
+contracts/evm/out/
+contracts/evm/cache/
+contracts/evm/lib/
 
