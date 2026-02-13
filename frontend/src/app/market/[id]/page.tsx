@@ -136,6 +136,83 @@ function MarketDetailInner({ marketId }: { marketId: number }) {
             />
           )}
 
+          {/* Settlement Status Indicator — shown when deadline passed but not yet settled */}
+          {(market.status === 1 || (isExpired && market.status !== 2)) && (
+            <div className="glass rounded-xl p-5 space-y-4 animate-fade-in">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-sm uppercase tracking-wider text-yellow">
+                  Settlement in Progress...
+                </h3>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 border border-accent/20 text-xs font-mono text-accent">
+                  {
+                    {
+                      ai_search: "\uD83D\uDD0D AI Web Search",
+                      polymarket_volume: "\uD83D\uDCCA Polymarket Volume",
+                      polymarket_traders: "\uD83D\uDC65 Polymarket Traders",
+                      kalshi_markets: "\uD83D\uDCCA Kalshi Markets",
+                      polymarket_kalshi_data: "\uD83D\uDCCA Polymarket + Kalshi",
+                    }[market.resolutionSource] ?? market.resolutionSource
+                  }
+                </span>
+              </div>
+              <div className="flex items-center gap-0">
+                {[
+                  { label: "Settlement Requested", done: market.status >= 1 },
+                  { label: "Fetching Market Data", done: false },
+                  { label: "AI Analysis (Gemini)", done: false },
+                  { label: "Onchain Settlement", done: market.status === 2 },
+                ].map((step, i, arr) => {
+                  const isActive =
+                    (i === 0 && market.status >= 1) ||
+                    (i === 1 && market.status === 1) ||
+                    (i === 2 && market.status === 1) ||
+                    (i === 3 && market.status === 2);
+                  const isCurrent =
+                    !step.done &&
+                    ((i === 1 && market.status === 1) ||
+                      (i === 0 && market.status === 0));
+                  return (
+                    <div key={i} className="flex items-center flex-1 min-w-0">
+                      <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
+                        <div
+                          className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all ${
+                            step.done
+                              ? "bg-green/20 border-green text-green"
+                              : isActive && !step.done
+                                ? "border-yellow text-yellow animate-pulse-glow"
+                                : "border-border text-muted"
+                          }`}
+                        >
+                          {step.done ? "\u2713" : isCurrent ? "\u23F3" : "\u25CB"}
+                        </div>
+                        <span
+                          className={`text-[10px] text-center leading-tight w-20 ${
+                            step.done
+                              ? "text-green"
+                              : isActive
+                                ? "text-yellow"
+                                : "text-muted"
+                          }`}
+                        >
+                          {step.label}
+                        </span>
+                      </div>
+                      {i < arr.length - 1 && (
+                        <div
+                          className={`flex-1 h-px mx-1 mt-[-18px] ${
+                            step.done
+                              ? "bg-green/50"
+                              : "bg-border"
+                          }`}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Request Settlement */}
           {market.status === 0 && isExpired && isConnected && (
             <div className="glass rounded-xl p-5 text-center space-y-3">

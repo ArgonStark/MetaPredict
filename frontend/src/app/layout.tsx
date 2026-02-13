@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { Web3Provider } from "@/providers/Web3Provider";
 import { Header } from "@/components/Header";
+import { Footer } from "@/components/Footer";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -35,6 +36,7 @@ export default function RootLayout({
         <Web3Provider>
           <Header />
           <main className="min-h-screen pt-20">{children}</main>
+          <Footer />
         </Web3Provider>
       </body>
     </html>

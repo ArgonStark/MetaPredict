@@ -48,6 +48,58 @@ export default function HomePage() {
         <StatsBar />
       </section>
 
+      {/* How It Works */}
+      <section className="mb-16 animate-fade-in">
+        <h2 className="text-xl font-bold text-center mb-8">How It Works</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 relative">
+          {[
+            {
+              emoji: "\uD83C\uDFAF",
+              title: "Create Market",
+              description:
+                "Ask a question about prediction market platforms like Polymarket or Kalshi",
+            },
+            {
+              emoji: "\uD83D\uDCB0",
+              title: "Make Predictions",
+              description:
+                "Bet USDC on your predicted outcome \u2014 Yes/No or multi-choice",
+            },
+            {
+              emoji: "\uD83E\uDD16",
+              title: "AI Settlement",
+              description:
+                "Chainlink CRE fetches data from Polymarket & Kalshi APIs, then AI determines the outcome",
+            },
+            {
+              emoji: "\uD83C\uDFC6",
+              title: "Claim Winnings",
+              description:
+                "Winners automatically receive their share of the pool",
+            },
+          ].map((step, i) => (
+            <div key={i} className="relative flex flex-col items-center">
+              {/* Connecting line */}
+              {i < 3 && (
+                <div className="hidden lg:block absolute top-10 left-[calc(50%+40px)] w-[calc(100%-80px)] h-px bg-gradient-to-r from-accent/40 to-cyan/40" />
+              )}
+              <div className="glass rounded-xl p-5 text-center w-full hover:glow-accent transition-all group">
+                <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-accent/15 border border-accent/30 text-accent text-xs font-bold mb-3">
+                  {i + 1}
+                </div>
+                <div className="text-3xl mb-3">{step.emoji}</div>
+                <h3 className="font-semibold text-sm mb-2 group-hover:text-accent transition-colors">
+                  {step.title}
+                </h3>
+                <p className="text-xs text-muted leading-relaxed">
+                  {step.description}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* Active Markets */}
       <section>
         <div className="flex items-center justify-between mb-6">
