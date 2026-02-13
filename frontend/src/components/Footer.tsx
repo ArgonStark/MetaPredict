@@ -5,7 +5,7 @@ export function Footer() {
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted">
           <p>
             <span className="text-gradient font-semibold">MetaPredict</span>
-            {" \u2014 "}Built for Chainlink Convergence Hackathon 2025
+            {" \u2014 "}Built for Chainlink Convergence Hackathon 2026
           </p>
           <p className="text-center">
             Powered by{" "}
